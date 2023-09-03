@@ -64,3 +64,15 @@ export function transformSelection(selection: any) {
 	}
 	return selection;
 }
+
+export function transformData(data: any) {
+	if (!data) {
+		return data;
+	}
+	for (let key in data) {
+		if (typeof data[key] === "object") {
+			data[key] = transformData(data[key]?.["query"]?.["arguments"]?.["data"]) ?? data[key];
+		}
+	}
+	return data;
+}

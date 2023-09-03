@@ -3,7 +3,7 @@ import {PrismaClient} from "@prisma/client";
 import express from "express";
 import fs from "fs";
 import https from "https";
-import {transformSelection, transformValues} from "./helpers/transformValues.js";
+import {transformData, transformSelection, transformValues} from "./helpers/transformValues.js";
 import {transformAction} from "./helpers/transformAction.js";
 
 const TOKEN = process.env.TOKEN;
@@ -70,6 +70,7 @@ app.all("/:version/:id/graphql", async (req, res) => {
 			body = transformValues(body);
 		}
 		body.query.selection = transformSelection(body.query.selection);
+		body.query.arguments.data = transformData(body.query.arguments.data)
 		console.dir(body, {depth: null, colors: true}); // <- For debugging
 		const result = await (prisma as any)[body.modelName][body.action](
 			convertToPrismaQuery(body)
@@ -84,6 +85,8 @@ app.all("/:version/:id/graphql", async (req, res) => {
 		}
 		res.send(JSON.stringify(data));
 	} catch (e) {
+		console.error("Failed to process request");
+		console.error(e);
 		res.status(500).send(e);
 	}
 })
@@ -115,13 +118,10 @@ if (process.env.SELF_SIGNED_CERT) {
 		"Content-Type": "application/json",
 		"Authorization": `Bearer ${TOKEN}`
 	},
-	body: JSON.stringify({}
-	)
-})
+	body: JSON.stringify()
 if (test.ok) {
 	console.log(JSON.stringify(await test.json(), null, 2));
-}
-else {
+} else {
 	console.log(await test.text());
 }*/
 
