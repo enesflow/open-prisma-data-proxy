@@ -1,6 +1,6 @@
 {
   "name": "@enesflow/open-prisma-data-proxy",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "",
   "main": "index.js",
   "bin": "./build/index.js",
@@ -8,7 +8,7 @@
     "build": "tsc",
     "start": "node build/index.js",
     "dev": "tsc-watch --onSuccess \"pnpm start\"",
-    "postinstall": "echo \"postinstall\"",
+    "postinstall": "prisma generate",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "type": "module",
