@@ -1,10 +1,13 @@
-import {type Input, object, parse, string, url} from "valibot";
+import {boolean, coerce, type Input, object, optional, parse, string, url} from "valibot";
 import dotenv from "dotenv";
 dotenv.config();
 
 const envSchema = object({
 	DATABASE_URL: string([url()]),
 	TOKEN: string(),
+	SELF_SIGNED_CERT: optional(coerce(
+		boolean(), (v) => v === "true",
+	))
 })
 declare global {
 	namespace NodeJS {
@@ -13,7 +16,14 @@ declare global {
 }
 // validate process.env against envSchema
 try {
-	parse(envSchema, process.env);
+	const env = parse(envSchema, process.env);
+	// for every key in env, if the typeof env[key] is a boolean, if false, set process.env[key] to ""
+	// so that if (process.env[key]) will be false
+	for (const key in env) {
+		if (typeof (env as any)[key] === "boolean" && !(env as any)[key]) {
+			process.env[key] = "";
+		}
+	}
 } catch (e) {
 	const err = e as any;
 	console.error(err);

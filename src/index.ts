@@ -12,12 +12,6 @@ const PORT = 3000;
 const prisma = new PrismaClient();
 await prisma.$connect();
 
-const key = fs.readFileSync("./certs/selfsigned.key");
-const cert = fs.readFileSync("./certs/selfsigned.crt");
-const options = {
-	key,
-	cert
-}
 
 export type RequestBody = {
 	modelName: string;
@@ -70,35 +64,49 @@ app.use((req, res, next) => {
 app.all("/:version/:id/graphql", async (req, res) => {
 	try {
 
-	let body = req.body as RequestBody;
-	body = transformAction(body);
-	if (body.action.startsWith("create")) {
-		body = transformValues(body);
-	}
-	body.query.selection = transformSelection(body.query.selection);
-	console.log(JSON.stringify(body, null, 2)); // <- for debugging
-	const result = await (prisma as any)[body.modelName][body.action](
-		convertToPrismaQuery(body)
-	)
-
-
-	const sessionName = body.action + "Session";
-	const data = {
-		data: {
-			[sessionName]: result
+		let body = req.body as RequestBody;
+		body = transformAction(body);
+		if (body.action.startsWith("create")) {
+			body = transformValues(body);
 		}
-	}
-	res.send(JSON.stringify(data));
-	}
-	catch (e) {
+		body.query.selection = transformSelection(body.query.selection);
+		console.dir(body, {depth: null, colors: true}); // <- For debugging
+		const result = await (prisma as any)[body.modelName][body.action](
+			convertToPrismaQuery(body)
+		)
+
+
+		const sessionName = body.action + "Session";
+		const data = {
+			data: {
+				[sessionName]: result
+			}
+		}
+		res.send(JSON.stringify(data));
+	} catch (e) {
 		res.status(500).send(e);
 	}
 })
 
-https.createServer(options, app).listen(PORT, () => {
-		console.log(`🔅 Server is listening on port ${PORT}`);
+const startMessage = `🔅 Server is listening on port ${PORT}`;
+if (process.env.SELF_SIGNED_CERT) {
+	const key = fs.readFileSync("./certs/selfsigned.key");
+	const cert = fs.readFileSync("./certs/selfsigned.crt");
+	const options = {
+		key,
+		cert
 	}
-);
+	https.createServer(options, app).listen(PORT, () => {
+			console.log(startMessage, "|with self-signed certificate|");
+		}
+	);
+} else {
+	// just start the server
+	app.listen(PORT, () => {
+			console.log(startMessage);
+		}
+	);
+}
 
 // test
 /*const test = await fetch("https://localhost:3000/v1/1/graphql", {
