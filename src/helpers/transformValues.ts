@@ -1,5 +1,5 @@
 function transformField(value: any) {
-	if (value.$type === "DateTime") {
+	if (value?.$type === "DateTime") {
 		return new Date(value.value);
 	}
 	return value;
@@ -9,7 +9,7 @@ function transformField(value: any) {
 export function transformValues(data: any) {
 	for (const key in data) {
 		if (typeof data[key] === "object") {
-			if (data[key].$type) {
+			if (data[key]?.$type) {
 				data[key] = transformField(data[key]);
 			} else {
 				data[key] = transformValues(data[key]);
