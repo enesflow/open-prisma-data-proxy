@@ -1,5 +1,6 @@
 import "./helpers/loadenv.js";
 import {PrismaClient} from "@prisma/client";
+import {PrismaClientKnownRequestError} from "@prisma/client/runtime/library.js";
 import express from "express";
 import fs from "fs";
 import https from "https";
@@ -11,6 +12,13 @@ const PORT = 3000;
 
 const prisma = new PrismaClient();
 await prisma.$connect();
+
+const logging = {
+	beforeQuery: false,
+	afterQuery: false,
+	result: false,
+	error: true,
+}
 
 
 export type RequestBody = {
@@ -69,14 +77,18 @@ app.all("/:version/:id/graphql", async (req, res) => {
 		try {
 
 			let body = req.body as RequestBody;
-			console.log("Before:")
-			console.dir(body, {depth: null, colors: true}); // <- For debugging}
+			if (logging.beforeQuery) {
+				console.log("Before:")
+				console.dir(body, {depth: null, colors: true});
+			}
 			body = transformAction(body);
 			body.query.arguments = transformValues(body.query.arguments);
 			body.query.selection = transformSelection(body.query.selection);
 			body.query.arguments.data = transformData(body.query.arguments.data)
+			if (logging.afterQuery) {
 			console.log("After:")
-			console.dir(body, {depth: null, colors: true}); // <- For debugging
+			console.dir(body, {depth: null, colors: true});
+			}
 			const result = await (prisma as any)[body.modelName][body.action](
 				convertToPrismaQuery(body)
 			)
@@ -88,15 +100,30 @@ app.all("/:version/:id/graphql", async (req, res) => {
 					[sessionName]: result
 				}
 			}
-			console.log("Result:")
-			console.dir(data, {depth: null, colors: true}); // <- For debugging
+			if (logging.result) {
+				console.log("Result:")
+				console.dir(data, {depth: null, colors: true});
+			}
 			res.send(JSON.stringify(data));
 		} catch
 			(e) {
-			console.error("Failed to process request");
-			console.error(e);
+			if (logging.error) {
+				console.log("Error:")
+				console.error(JSON.stringify(e, null, 2));
+			}
+			const isPrismaError = e instanceof PrismaClientKnownRequestError;
 
-			res.status(500).send(e);
+			res.status(200).json({ // for some reason prisma returns 200 on error
+				errors: [
+					{
+						error: "There was an error processing your request.",
+						user_facing_error: {
+							...(e as any),
+							is_panic: !isPrismaError,
+						}
+					}
+				]
+			})
 		}
 	}
 )
