@@ -4,3 +4,4 @@ build
 certs
 prisma
 .env
+.DS_Store
