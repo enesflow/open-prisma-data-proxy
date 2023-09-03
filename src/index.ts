@@ -1,12 +1,11 @@
+import "./helpers/loadenv.js";
 import {PrismaClient} from "@prisma/client";
-import dotenv from "dotenv";
 import express from "express";
 import fs from "fs";
 import https from "https";
 import {transformSelection, transformValues} from "./helpers/transformValues.js";
 import {transformAction} from "./helpers/transformAction.js";
 
-dotenv.config();
 const TOKEN = process.env.TOKEN;
 const PORT = 3000;
 
