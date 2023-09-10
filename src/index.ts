@@ -55,6 +55,10 @@ function convertToPrismaQuery(body: RequestBody) {
 }
 
 const app = express();
+app.use(function autoContentTypeJSON(req, res, next) {
+	req.headers["content-type"] = "application/json";
+	next();
+});
 app.use(express.json());
 
 app.use((req, res, next) => {
@@ -73,10 +77,41 @@ app.use((req, res, next) => {
 	}
 })
 
+function newError(message: string
+	, isPanic = true
+) {
+	return {
+		errors: [
+			{
+				error: message,
+				user_facing_error: {
+					is_panic: isPanic,
+					message,
+				}
+			}
+		]
+	}
+}
+
 app.all("/:version/:id/graphql", async (req, res) => {
 		try {
 
 			let body = req.body as RequestBody;
+			if (!body.action || !body.modelName || !body.query) {
+				// send error
+				const empty: string[] = [];
+				if (!body.action) {
+					empty.push("action");
+				}
+				if (!body.modelName) {
+					empty.push("modelName");
+				}
+				if (!body.query) {
+					empty.push("query");
+				}
+				res.status(200).json(newError(`Invalid request body. Missing ${empty.map(e => `"${e}"`).join(", ")}.`));
+				return;
+			}
 			if (logging.beforeQuery) {
 				console.log("Before:")
 				console.dir(body, {depth: null, colors: true});
@@ -86,8 +121,8 @@ app.all("/:version/:id/graphql", async (req, res) => {
 			body.query.selection = transformSelection(body.query.selection);
 			body.query.arguments.data = transformData(body.query.arguments.data)
 			if (logging.afterQuery) {
-			console.log("After:")
-			console.dir(body, {depth: null, colors: true});
+				console.log("After:")
+				console.dir(body, {depth: null, colors: true});
 			}
 			const result = await (prisma as any)[body.modelName][body.action](
 				convertToPrismaQuery(body)
@@ -109,21 +144,11 @@ app.all("/:version/:id/graphql", async (req, res) => {
 			(e) {
 			if (logging.error) {
 				console.log("Error:")
-				console.error(JSON.stringify(e, null, 2));
+				console.error(e);
 			}
 			const isPrismaError = e instanceof PrismaClientKnownRequestError;
 
-			res.status(200).json({ // for some reason prisma returns 200 on error
-				errors: [
-					{
-						error: "There was an error processing your request.",
-						user_facing_error: {
-							...(e as any),
-							is_panic: !isPrismaError,
-						}
-					}
-				]
-			})
+			res.status(500).json(newError("There was an error processing your request.", !isPrismaError));
 		}
 	}
 )
