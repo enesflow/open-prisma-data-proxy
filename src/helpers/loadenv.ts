@@ -1,6 +1,4 @@
 import {boolean, coerce, type Input, object, optional, parse, string, url} from "valibot";
-import dotenv from "dotenv";
-dotenv.config();
 
 const envSchema = object({
 	DATABASE_URL: string([url()]),

@@ -1,194 +1,240 @@
 import "./helpers/loadenv.js";
 import {PrismaClient} from "@prisma/client";
 import {PrismaClientKnownRequestError} from "@prisma/client/runtime/library.js";
-import express from "express";
+import Elysia from "elysia";
 import fs from "fs";
+import {IncomingHttpHeaders} from "http";
 import https from "https";
 import {transformData, transformSelection, transformValues} from "./helpers/transformValues.js";
 import {transformAction} from "./helpers/transformAction.js";
 
 const TOKEN = process.env.TOKEN;
 const PORT = 3000;
+const startMessage = `🔅 Server is listening on port ${PORT}`;
 
 const prisma = new PrismaClient();
 await prisma.$connect();
 
-const logging = {
-	beforeQuery: false,
-	afterQuery: false,
-	result: false,
-	error: true,
-}
+/*const logging = {
+  beforeQuery: false,
+  afterQuery: false,
+  result: false,
+  error: true,
+}*/
 
 
 export type RequestBody = {
-	modelName: string;
-	action: string;
-	query: {
-		arguments: {
-			where?: any;
-			data?: any;
-			take?: number;
-			distinct?: any;
-			orderBy?: any;
-			skip?: number;
-			create?: any;
-			update?: any;
-		};
-		selection?: any;
-	}
+  modelName: string;
+  action: string;
+  query: {
+    arguments: {
+      where?: any;
+      data?: any;
+      take?: number;
+      distinct?: any;
+      orderBy?: any;
+      skip?: number;
+      create?: any;
+      update?: any;
+    };
+    selection?: any;
+  }
 }
-
 
 function convertToPrismaQuery(body: RequestBody) {
-	return {
-		data: body.query.arguments.data,
-		where: body.query.arguments.where,
-		select: body.query.selection,
-		take: body.query.arguments.take,
-		distinct: body.query.arguments.distinct,
-		orderBy: body.query.arguments.orderBy,
-		skip: body.query.arguments.skip,
-		create: body.query.arguments.create,
-		update: body.query.arguments.update,
-	}
+  return {
+    data: body.query.arguments.data,
+    where: body.query.arguments.where,
+    select: body.query.selection,
+    take: body.query.arguments.take,
+    distinct: body.query.arguments.distinct,
+    orderBy: body.query.arguments.orderBy,
+    skip: body.query.arguments.skip,
+    create: body.query.arguments.create,
+    update: body.query.arguments.update,
+  }
 }
 
-const app = express();
-app.use(function autoContentTypeJSON(req, res, next) {
-	req.headers["content-type"] = "application/json";
-	next();
-});
-app.use(express.json());
-
-app.use((req, res, next) => {
-	if (!req.headers.authorization) {
-		console.log("No authorization header")
-		res.status(401).send("Unauthorized")
-		return;
-	} else {
-		const auth = req.headers.authorization.trim();
-		if (auth !== `Bearer ${TOKEN}`) {
-			console.log("Invalid authorization header", auth)
-			res.status(401).send("Unauthorized")
-			return;
-		}
-		next();
-	}
-})
-
-function newError(message: string
-	, isPanic = true
-) {
-	return {
-		errors: [
-			{
-				error: message,
-				user_facing_error: {
-					is_panic: isPanic,
-					message,
-				}
-			}
-		]
-	}
+function isValidBody(body: any): asserts body is RequestBody {
+  const empty = [];
+  if (!body.action) {
+    empty.push("action");
+  }
+  if (!body.modelName) {
+    empty.push("modelName");
+  }
+  if (!body.query) {
+    empty.push("query");
+  }
+  if (empty.length > 0) {
+    throw new Error(`Invalid request body. Missing ${empty.map(e => `"${e}"`).join(", ")}.`);
+  }
 }
 
-app.all("/:version/:id/graphql", async (req, res) => {
-		try {
+function transformBody(body: RequestBody) {
+  body = transformAction(body);
+  body.query.arguments = transformValues(body.query.arguments);
+  body.query.selection = transformSelection(body.query.selection);
+  body.query.arguments.data = transformData(body.query.arguments.data)
+  return body;
+}
 
-			let body = req.body as RequestBody;
-			if (!body.action || !body.modelName || !body.query) {
-				// send error
-				const empty: string[] = [];
-				if (!body.action) {
-					empty.push("action");
-				}
-				if (!body.modelName) {
-					empty.push("modelName");
-				}
-				if (!body.query) {
-					empty.push("query");
-				}
-				res.status(200).json(newError(`Invalid request body. Missing ${empty.map(e => `"${e}"`).join(", ")}.`));
-				return;
-			}
-			if (logging.beforeQuery) {
-				console.log("Before:")
-				console.dir(body, {depth: null, colors: true});
-			}
-			body = transformAction(body);
-			body.query.arguments = transformValues(body.query.arguments);
-			body.query.selection = transformSelection(body.query.selection);
-			body.query.arguments.data = transformData(body.query.arguments.data)
-			if (logging.afterQuery) {
-				console.log("After:")
-				console.dir(body, {depth: null, colors: true});
-			}
-			const result = await (prisma as any)[body.modelName][body.action](
-				convertToPrismaQuery(body)
-			)
+const app = new Elysia();
 
+app.post("*", async ({body: untypedBody, set}) => {
+    function newError(message: string
+      , isPanic = true
+    ) {
+      return {
+        errors: [
+          {
+            error: message,
+            user_facing_error: {
+              is_panic: isPanic,
+              message,
+            }
+          }
+        ]
+      }
+    }
 
-			const sessionName = body.action + "Session";
-			const data = {
-				data: {
-					[sessionName]: result
-				}
-			}
-			if (logging.result) {
-				console.log("Result:")
-				console.dir(data, {depth: null, colors: true});
-			}
-			res.send(JSON.stringify(data));
-		} catch
-			(e) {
-			if (logging.error) {
-				console.log("Error:")
-				console.error(e);
-			}
-			const isPrismaError = e instanceof PrismaClientKnownRequestError;
+    const body = transformBody(untypedBody as RequestBody);
+    try {
 
-			res.status(500).json(newError("There was an error processing your request.", !isPrismaError));
-		}
-	}
+      const result = await (prisma as any)[body.modelName][body.action](
+        convertToPrismaQuery(body)
+      )
+      return {
+        data: {
+          [body.action + "Session"]: result
+        }
+      }
+    } catch (e) {
+      const isPrismaError = e instanceof PrismaClientKnownRequestError;
+
+      // res.status(500).json(newError("There was an error processing your request.", !isPrismaError));
+      set.status = 500;
+      return newError("There was an error processing your request.", !isPrismaError);
+
+    }
+  },
+  {
+    type: "json",
+    beforeHandle: async ({headers, body, set}) => {
+      if (!headers.authorization) {
+        set.status = 401;
+        return "Unauthorized";
+      }
+      const auth = headers.authorization.trim();
+      if (auth !== `Bearer ${TOKEN}`) {
+        set.status = 401;
+        return "Unauthorized";
+      }
+      try {
+        isValidBody(body);
+      } catch (e) {
+        set.status = 400;
+        return (e as any).message;
+      }
+    }
+  }
 )
 
-const startMessage = `🔅 Server is listening on port ${PORT}`;
-if (process.env.SELF_SIGNED_CERT) {
-	const key = fs.readFileSync("./certs/selfsigned.key");
-	const cert = fs.readFileSync("./certs/selfsigned.crt");
-	const options = {
-		key,
-		cert
-	}
-	https.createServer(options, app).listen(PORT, () => {
-			console.log(startMessage, "|with self-signed certificate|");
-		}
-	);
-} else {
-	// just start the server
-	app.listen(PORT, () => {
-			console.log(startMessage);
-		}
-	);
+function wrapElysiaServerWithHTTPS(elysia: Elysia): https.RequestListener<any, any> {
+  return async (req, res) => {
+    function incomingHttpHeadersToHeaders(incomingHttpHeaders: IncomingHttpHeaders) {
+      const headers = new Headers();
+      for (const key in incomingHttpHeaders) {
+        headers.set(key, incomingHttpHeaders[key] as string);
+      }
+      return headers;
+
+    }
+
+    function bodyToString() {
+      return new Promise<string>((resolve, reject) => {
+        let body = "";
+        req.on("data", (chunk: string) => {
+          body += chunk;
+        })
+        req.on("end", () => {
+          resolve(body);
+        })
+        req.on("error", reject);
+      })
+    }
+
+    async function requestToElysiaReadableRequest(req: https.IncomingMessage) {
+      const body = await bodyToString();
+      return {
+        url: req.url ?? "",
+        headers: incomingHttpHeadersToHeaders(req.headers),
+        text: () => Promise.resolve(body),
+        arrayBuffer() {
+          return Promise.resolve(new ArrayBuffer(body.length));
+        },
+        blob() {
+          return Promise.resolve(new Blob([body]));
+        },
+        json(): Promise<any> {
+          return Promise.resolve(JSON.parse(body));
+        },
+        body: JSON.parse(body),
+        cache: req.headers["cache-control"] as RequestCache ?? "no-cache" as const,
+        bodyUsed: false,
+        clone() {
+          return this;
+        },
+        credentials: req.headers["authorization"] ? "include" as const : "omit" as const,
+        destination: req.headers["destination"] as RequestDestination ?? "document",
+        integrity: req.headers["integrity"]?.toString() ?? "",
+        method: req.method ?? "GET",
+        mode: req.headers["no-cors"] ? "no-cors" : "cors",
+        redirect: req.headers["redirect"] as RequestRedirect ?? "follow",
+        keepalive: !!req.headers["keep-alive"],
+        referrer: req.headers["referrer"]?.toString() ?? "",
+        formData() {
+          return new Promise((resolve) => resolve(new FormData()));
+        },
+        referrerPolicy: req.headers["referrer-policy"] as ReferrerPolicy ?? "",
+        signal: null as any
+      }
+    }
+
+    const request = await requestToElysiaReadableRequest(req);
+
+    const result = await elysia.handle(request as any);
+    res.statusCode = result.status;
+    for (const [key, value] of result.headers.entries()) {
+      res.setHeader(key, value);
+    }
+    res.end(await result.text());
+  }
+
 }
 
-// test
-/*const test = await fetch("https://localhost:3000/v1/1/graphql", {
-	method: "POST",
-	headers: {
-		"Content-Type": "application/json",
-		"Authorization": `Bearer ${TOKEN}`
-	},
-	body: JSON.stringify()
-if (test.ok) {
-	console.log(JSON.stringify(await test.json(), null, 2));
+if (process.env.SELF_SIGNED_CERT) {
+  const key = fs.readFileSync("./certs/selfsigned.key");
+  const cert = fs.readFileSync("./certs/selfsigned.crt");
+  const options = {
+    key,
+    cert
+  }
+  console.warn("- Self signed certificates support is not guaranteed.");
+  console.warn("- Self signed certificates are being used. This is only for development purposes.");
+  https.createServer(options, wrapElysiaServerWithHTTPS(app)
+  ).listen(PORT, () => {
+    console.log(startMessage, "with self signed certificates (https)");
+  })
 } else {
-	console.log(await test.text());
-}*/
+  app.listen(PORT, () => {
+      console.log(startMessage);
+    }
+  );
+}
 
 // on exit, close the prisma connection
 process.on('SIGINT', async () => {
-	await prisma.$disconnect();
-	process.exit(0);
+  await prisma.$disconnect();
+  process.exit(0);
 });

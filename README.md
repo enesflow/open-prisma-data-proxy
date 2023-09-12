@@ -24,13 +24,11 @@ git clone https://github.com/enesflow/open-prisma-data-proxy.git
 mkdir "prisma"
 cp "path/to/schema.prisma" "prisma/schema.prisma"
 # Set environment variables (see below)
-touch ".env"
 # Install dependencies
-pnpm install
-# The prisma client should be generated automatically, if not run:
-# pnpm run generate
+bun install
+# The prisma client should be generated automatically
 # Start the server
-pnpm dev
+bun dev
 ```
 
 > Docker support is coming soon
@@ -55,5 +53,5 @@ sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout "./certs/selfsi
 > Example:
 ```bash
 cd "path/to/your/application"
-NODE_TLS_REJECT_UNAUTHORIZED=0 pnpm dev
+NODE_TLS_REJECT_UNAUTHORIZED=0 bun dev
 ```
