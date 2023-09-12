@@ -24,6 +24,7 @@ git clone https://github.com/enesflow/open-prisma-data-proxy.git
 mkdir "prisma"
 cp "path/to/schema.prisma" "prisma/schema.prisma"
 # Set environment variables (see below)
+touch ".env"
 # Install dependencies
 bun install
 # The prisma client should be generated automatically
