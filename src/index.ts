@@ -39,7 +39,7 @@ export type RequestBody = {
 }
 
 function convertToPrismaQuery(body: RequestBody) {
-  return {
+  /*return {
     data: body.query.arguments.data,
     where: body.query.arguments.where,
     select: body.query.selection,
@@ -49,6 +49,11 @@ function convertToPrismaQuery(body: RequestBody) {
     skip: body.query.arguments.skip,
     create: body.query.arguments.create,
     update: body.query.arguments.update,
+  }*/
+  // simplified:
+  return {
+    ...body.query.arguments,
+    select: body.query.selection,
   }
 }
 
@@ -92,6 +97,7 @@ async function executeQuery(body: RequestBody) {
       ]
     }
   }
+
   try {
     const result = await (prisma as any)[body.modelName][body.action](
       convertToPrismaQuery(body)
@@ -243,8 +249,7 @@ if (process.env.SELF_SIGNED_CERT) {
   }
   console.warn("- Self signed certificates support is not guaranteed.");
   console.warn("- Self signed certificates are being used. This is only for development purposes.");
-  https.createServer(options, wrapElysiaServerWithHTTPS(app)
-  ).listen(PORT, () => {
+  https.createServer(options, wrapElysiaServerWithHTTPS(app)).listen(PORT, () => {
     console.log(startMessage, "with self signed certificates (https)");
   })
 } else {
