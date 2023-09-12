@@ -1,14 +1,15 @@
-import "./helpers/loadenv.js";
 import {PrismaClient} from "@prisma/client";
 import {PrismaClientKnownRequestError} from "@prisma/client/runtime/library.js";
 import Elysia from "elysia";
 import fs from "fs";
+import {getCacheInformationFromHeaders} from "helpers/cache/cache";
+import {useJavascriptMapCacheStore} from "helpers/cache/map";
+import "helpers/loadenv";
+import {joinAction, transformSingleAction} from "helpers/transformAction";
+import {transformData, transformSelection, transformValues} from "helpers/transformValues";
 import {IncomingHttpHeaders} from "http";
 import https from "https";
-import {useJavascriptMapCacheStore} from "helpers/cache/map";
-import {getCacheInformationFromHeaders} from "helpers/cache/cache";
-import {transformData, transformSelection, transformValues} from "helpers/transformValues";
-import {transformAction} from "helpers/transformAction";
+import {any, array, Input, object, parse, string} from "valibot";
 
 const cache = useJavascriptMapCacheStore();
 
@@ -19,38 +20,32 @@ const startMessage = `🔅 Server is listening on port ${PORT}`;
 const prisma = new PrismaClient();
 await prisma.$connect();
 
+const bodySchema = object({
+  action: string(),
+  modelName: string(),
+  query: object({
+    arguments: object({
+      where: any(),
+      data: any(),
+      take: any(),
+      distinct: any(),
+      orderBy: any(),
+      skip: any(),
+      create: any(),
+      update: any(),
+    }),
+    selection: any()
+  })
+})
+const batchBodySchema = object({
+  batch: array(bodySchema)
+})
 
-export type RequestBody = {
-  modelName: string;
-  action: string;
-  query: {
-    arguments: {
-      where?: any;
-      data?: any;
-      take?: number;
-      distinct?: any;
-      orderBy?: any;
-      skip?: number;
-      create?: any;
-      update?: any;
-    };
-    selection?: any;
-  }
-}
+export type RequestBodySingle = Input<typeof bodySchema>;
+export type RequestBodyBatch = Input<typeof batchBodySchema>;
+export type RequestBody = RequestBodySingle | RequestBodyBatch;
 
-function convertToPrismaQuery(body: RequestBody) {
-  /*return {
-    data: body.query.arguments.data,
-    where: body.query.arguments.where,
-    select: body.query.selection,
-    take: body.query.arguments.take,
-    distinct: body.query.arguments.distinct,
-    orderBy: body.query.arguments.orderBy,
-    skip: body.query.arguments.skip,
-    create: body.query.arguments.create,
-    update: body.query.arguments.update,
-  }*/
-  // simplified:
+function convertToPrismaQuery(body: RequestBodySingle) {
   return {
     ...body.query.arguments,
     select: body.query.selection,
@@ -58,23 +53,25 @@ function convertToPrismaQuery(body: RequestBody) {
 }
 
 function isValidBody(body: any): asserts body is RequestBody {
-  const empty = [];
-  if (!body.action) {
-    empty.push("action");
-  }
-  if (!body.modelName) {
-    empty.push("modelName");
-  }
-  if (!body.query) {
-    empty.push("query");
-  }
-  if (empty.length > 0) {
-    throw new Error(`Invalid request body. Missing ${empty.map(e => `"${e}"`).join(", ")}.`);
+  try {
+    parse(bodySchema, body);
+  } catch (e) {
+    try {
+      parse(batchBodySchema, body);
+    }
+    catch (e) {
+      throw new Error(`Invalid request body. ${(e as any).message}`);
+    }
   }
 }
 
-function transformBody(body: RequestBody) {
-  body = transformAction(body);
+function transformBody(body: RequestBody){
+  if ("batch" in body) {
+    const transformed = body.batch.map(transformBody)
+    body.batch = transformed as Exclude<typeof body.batch, RequestBodyBatch>
+    return body;
+  }
+  // body = transformAction(body);
   body.query.arguments = transformValues(body.query.arguments);
   body.query.selection = transformSelection(body.query.selection);
   body.query.arguments.data = transformData(body.query.arguments.data)
@@ -82,34 +79,80 @@ function transformBody(body: RequestBody) {
 }
 
 async function executeQuery(body: RequestBody) {
+  type PrismaError = {
+    error: string;
+    user_facing_error: {
+      is_panic: boolean;
+      message: string;
+    }
+  }
   function newError(message: string
     , isPanic = true
-  ) {
+  ): PrismaError {
     return {
-      errors: [
-        {
-          error: message,
-          user_facing_error: {
-            is_panic: isPanic,
-            message,
-          }
-        }
-      ]
+      error: message,
+      user_facing_error: {
+        is_panic: isPanic,
+        message,
+      }
     }
   }
 
-  try {
-    const result = await (prisma as any)[body.modelName][body.action](
-      convertToPrismaQuery(body)
-    )
-    return {
-      data: {
-        [body.action + "Session"]: result
+  async function singleQuery(body: RequestBodySingle) {
+    try {
+      const result = await (prisma as any)[body.modelName][transformSingleAction(body.action)](
+        convertToPrismaQuery(body)
+      )
+      return {
+        status: "success" as const,
+        data: result
+      }
+    } catch (e) {
+      const isPrismaError = e instanceof PrismaClientKnownRequestError;
+      return {
+        status: "error" as const,
+        data: newError("There was an error processing your request.", !isPrismaError)
       }
     }
-  } catch (e) {
-    const isPrismaError = e instanceof PrismaClientKnownRequestError;
-    return newError("There was an error processing your request.", !isPrismaError);
+  }
+  let errors: PrismaError[] = [];
+
+  async function processSingleQuery(body: RequestBodySingle, index = 0) {
+    const result = await singleQuery(body);
+    if (result.status === "error") {
+      errors.push(result.data);
+      return null;
+    }
+    return {
+      ...result,
+      index
+    };
+  }
+
+  if ("batch" in body) {
+    // multiple queries at once
+    const result = await Promise.all(body.batch.map((b, i) => processSingleQuery(b, i)))
+    return {
+      batchResult: [
+        ...(result.map(r => (
+          r?.data && {
+            data: {
+              [joinAction(body.batch[r.index].action ,body.batch[r.index].modelName)]: r.data
+            }
+          }
+        ))).filter(Boolean)
+      ].concat({
+        errors: errors.length > 0 ? errors : undefined
+      }),
+    }
+  } else {
+    const result = await processSingleQuery(body);
+    return {
+      data: {
+        [joinAction(body.action, body.modelName)]: result?.data
+      },
+      errors: errors.length > 0 ? errors : undefined
+    }
   }
 }
 
@@ -229,7 +272,6 @@ function wrapElysiaServerWithHTTPS(elysia: Elysia): https.RequestListener<any, a
     }
 
     const request = await requestToElysiaReadableRequest(req);
-
     const result = await elysia.handle(request as any);
     res.statusCode = result.status;
     for (const [key, value] of result.headers.entries()) {
