@@ -1,13 +1,14 @@
 {
   "compilerOptions": {
-    "outDir": "./build",
     "target": "esnext",
     "module": "esnext",
     "moduleResolution": "node",
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "strict": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "rootDir": "./src",
+    "baseUrl": "./src",
   },
   "include": [
     "./src/**/*"

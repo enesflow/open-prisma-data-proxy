@@ -5,8 +5,12 @@ import Elysia from "elysia";
 import fs from "fs";
 import {IncomingHttpHeaders} from "http";
 import https from "https";
-import {transformData, transformSelection, transformValues} from "./helpers/transformValues.js";
-import {transformAction} from "./helpers/transformAction.js";
+import {useJavascriptMapCacheStore} from "helpers/cache/map";
+import {getCacheInformationFromHeaders} from "helpers/cache/cache";
+import {transformData, transformSelection, transformValues} from "helpers/transformValues";
+import {transformAction} from "helpers/transformAction";
+
+const cache = useJavascriptMapCacheStore();
 
 const TOKEN = process.env.TOKEN;
 const PORT = 3000;
@@ -14,13 +18,6 @@ const startMessage = `🔅 Server is listening on port ${PORT}`;
 
 const prisma = new PrismaClient();
 await prisma.$connect();
-
-/*const logging = {
-  beforeQuery: false,
-  afterQuery: false,
-  result: false,
-  error: true,
-}*/
 
 
 export type RequestBody = {
@@ -79,44 +76,68 @@ function transformBody(body: RequestBody) {
   return body;
 }
 
+async function executeQuery(body: RequestBody) {
+  function newError(message: string
+    , isPanic = true
+  ) {
+    return {
+      errors: [
+        {
+          error: message,
+          user_facing_error: {
+            is_panic: isPanic,
+            message,
+          }
+        }
+      ]
+    }
+  }
+  try {
+    const result = await (prisma as any)[body.modelName][body.action](
+      convertToPrismaQuery(body)
+    )
+    return {
+      data: {
+        [body.action + "Session"]: result
+      }
+    }
+  } catch (e) {
+    const isPrismaError = e instanceof PrismaClientKnownRequestError;
+    return newError("There was an error processing your request.", !isPrismaError);
+  }
+}
+
 const app = new Elysia();
 
-app.post("*", async ({body: untypedBody, set}) => {
-    function newError(message: string
-      , isPanic = true
-    ) {
-      return {
-        errors: [
-          {
-            error: message,
-            user_facing_error: {
-              is_panic: isPanic,
-              message,
-            }
-          }
-        ]
-      }
-    }
+app.post("*", async ({body: untypedBody, headers}) => {
 
+    const cacheInformation = getCacheInformationFromHeaders(headers)
     const body = transformBody(untypedBody as RequestBody);
-    try {
-
-      const result = await (prisma as any)[body.modelName][body.action](
-        convertToPrismaQuery(body)
-      )
-      return {
-        data: {
-          [body.action + "Session"]: result
+    const bodyAsString = JSON.stringify(body);
+    if (cacheInformation) {
+      const cached = await cache.getFull(bodyAsString); // <- this ensures that the cache is not expired
+      if (cached) {
+        const pastTimeInSeconds = (Date.now() - cached.createdAt) / 1000;
+        const leftTimeInSeconds = (cached.expiresAt - Date.now()) / 1000;
+        if (cacheInformation["stale-while-revalidate"]) {
+          if (pastTimeInSeconds > cacheInformation["stale-while-revalidate"]) {
+            setTimeout(() => {
+              cache.set(bodyAsString, executeQuery(body), leftTimeInSeconds * 1000);
+            }, 0);
+          }
         }
+        return cached.value;
       }
-    } catch (e) {
-      const isPrismaError = e instanceof PrismaClientKnownRequestError;
-
-      // res.status(500).json(newError("There was an error processing your request.", !isPrismaError));
-      set.status = 500;
-      return newError("There was an error processing your request.", !isPrismaError);
-
     }
+    const result = await executeQuery(body);
+    if (cacheInformation) {
+      if (cacheInformation["max-age"]) {
+        setTimeout(() => {
+          cache.set(bodyAsString, result, cacheInformation["max-age"]! * 1000);
+        }, 0);
+      }
+    }
+    return result;
   },
   {
     type: "json",
