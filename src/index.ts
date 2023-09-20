@@ -6,7 +6,7 @@ import {getCacheInformationFromHeaders} from "helpers/cache/cache";
 import {useJavascriptMapCacheStore} from "helpers/cache/map";
 import "helpers/loadenv";
 import {joinAction, transformSingleAction} from "helpers/transformAction";
-import {transformData, transformSelection, transformValues} from "helpers/transformValues";
+import {transformData, transformResponse, transformSelection, transformValues} from "helpers/transformValues";
 import {IncomingHttpHeaders} from "http";
 import https from "https";
 import {any, array, Input, object, parse, string} from "valibot";
@@ -78,7 +78,7 @@ function transformBody(body: RequestBody){
   return body;
 }
 
-async function executeQuery(body: RequestBody) {
+export async function executeQuery(body: RequestBody) {
   type PrismaError = {
     error: string;
     user_facing_error: {
@@ -109,6 +109,7 @@ async function executeQuery(body: RequestBody) {
       }
     } catch (e) {
       const isPrismaError = e instanceof PrismaClientKnownRequestError;
+      console.error(e)
       return {
         status: "error" as const,
         data: newError("There was an error processing your request.", !isPrismaError)
@@ -159,7 +160,6 @@ async function executeQuery(body: RequestBody) {
 const app = new Elysia();
 
 app.post("*", async ({body: untypedBody, headers}) => {
-
     const cacheInformation = getCacheInformationFromHeaders(headers)
     const body = transformBody(untypedBody as RequestBody);
     const bodyAsString = JSON.stringify(body);
@@ -178,7 +178,7 @@ app.post("*", async ({body: untypedBody, headers}) => {
         return cached.value;
       }
     }
-    const result = await executeQuery(body);
+    const result = transformResponse( await executeQuery(body));
     if (cacheInformation) {
       if (cacheInformation["max-age"]) {
         setTimeout(() => {
@@ -186,6 +186,7 @@ app.post("*", async ({body: untypedBody, headers}) => {
         }, 0);
       }
     }
+  
     return result;
   },
   {

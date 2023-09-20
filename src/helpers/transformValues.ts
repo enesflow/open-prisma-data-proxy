@@ -1,8 +1,36 @@
+import {executeQuery} from "index";
+
 function transformField(value: any) {
 	if (value?.$type === "DateTime") {
 		return new Date(value.value);
 	}
 	return value;
+}
+
+function transformFieldBackwards(value: any) {
+	// if date
+	if (value instanceof Date) {
+		return {
+			$type: "DateTime",
+			value: value.toISOString()
+		}
+	}
+	return value;
+}
+
+export function transformResponse<T extends any>(response: T) : T {
+	// if array loop
+	if (Array.isArray(response)) {
+		return response.map(transformResponse) as any;
+	}
+	// if object loop
+	else if (typeof response === "object") {
+		for (const key in response) {
+			response[key] = transformFieldBackwards(transformResponse(response[key]));
+		}
+		return response;
+	}
+	return response
 }
 
 
