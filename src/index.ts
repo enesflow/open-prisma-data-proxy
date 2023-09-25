@@ -134,17 +134,18 @@ export async function executeQuery(body: RequestBody) {
     // multiple queries at once
     const result = await Promise.all(body.batch.map((b, i) => processSingleQuery(b, i)))
     return {
-      batchResult: [
-        ...(result.map(r => (
-          r?.data && {
-            data: {
-              [joinAction(body.batch[r.index].action ,body.batch[r.index].modelName)]: r.data
-            }
+      // if no data, make the data null for that query
+      batchResult: [...result.map(r => (
+        r?.data ? {
+          data: {
+            [joinAction(body.batch[r.index].action ,body.batch[r.index].modelName)]: r.data
           }
-        ))).filter(Boolean)
-      ].concat({
+        } : {
+          data: null
+        }
+      )), {
         errors: errors.length > 0 ? errors : undefined
-      }),
+      }]
     }
   } else {
     const result = await processSingleQuery(body);
@@ -162,6 +163,7 @@ const app = new Elysia();
 app.post("*", async ({body: untypedBody, headers}) => {
     const cacheInformation = getCacheInformationFromHeaders(headers)
     const body = transformBody(untypedBody as RequestBody);
+    // console.log("Body", body);
     const bodyAsString = JSON.stringify(body);
     if (cacheInformation) {
       const cached = await cache.getFull(bodyAsString); // <- this ensures that the cache is not expired
@@ -186,7 +188,7 @@ app.post("*", async ({body: untypedBody, headers}) => {
         }, 0);
       }
     }
-  
+    // console.log("Result", result);
     return result;
   },
   {
